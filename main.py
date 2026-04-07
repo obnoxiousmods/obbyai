@@ -30,6 +30,7 @@ from starlette.routing import Route
 from prompts import get as get_prompt, list_prompts
 from tools import web_search, calculator
 from tools import rag
+from tools import read_url, python_exec
 from tools.file_processor import process_file, supported_extensions, ProcessingError, MODE_AUTO, MODE_TEXT, MODE_VISION, MODE_BOTH
 
 # ── Config ─────────────────────────────────────────────────────────────────────
@@ -54,7 +55,7 @@ DEFAULT_SERVER = "remote"
 DEFAULT_MODEL  = "gemma4:e2b"
 
 TOOL_CAPABLE_MODELS = {
-    "gemma4:latest", "gemma4",
+    "gemma4:latest", "gemma4", "gemma4:e2b",
     "gemma3:4b", "gemma3",
     "llama3.1:8b", "llama3.2:1b", "llama3.3:70b",
     "qwen2.5:7b", "qwen2.5-coder:7b", "qwen3:8b",
@@ -65,9 +66,33 @@ TOOL_CAPABLE_MODELS = {
 
 TOOL_SPECS = [
     web_search.TOOL_SPEC,
+    read_url.TOOL_SPEC,
+    python_exec.TOOL_SPEC,
     rag.TOOL_SPEC,
     calculator.TOOL_SPEC,
 ]
+
+# Per-model default context windows (in tokens)
+MODEL_CTX: dict[str, int] = {
+    "gemma4":          16384,
+    "gemma3":          16384,
+    "llama3.1":        16384,
+    "llama3.2":        16384,
+    "llama3.3":        16384,
+    "qwen2.5":         16384,
+    "qwen2.5-coder":   16384,
+    "qwen3":           16384,
+    "mistral":         16384,
+    "phi4-mini":        8192,
+    "deepseek-r1":     16384,
+}
+
+def _default_ctx(model: str) -> int:
+    base = model.split(":")[0].lower()
+    for prefix, ctx in MODEL_CTX.items():
+        if base.startswith(prefix):
+            return ctx
+    return 8192
 
 # ── Basic routes ───────────────────────────────────────────────────────────────
 
@@ -177,7 +202,100 @@ async def ingest(request: Request):
 
 # ── Tool execution ─────────────────────────────────────────────────────────────
 
-async def execute_tool(name: str, args: dict, session_id: str) -> str:
+def _format_tool_result(name: str, result: dict) -> str:
+    """Convert raw tool result dict into clean readable text for the model."""
+    if result.get("error"):
+        return f"[{name} ERROR]: {result['error']}"
+
+    if name == "web_search":
+        lines = [f"WEB SEARCH RESULTS for: \"{result.get('query','')}\"\n"]
+
+        # Structured sources first (GitHub, PyPI, npm) — most reliable
+        for src in result.get("structured_sources", []):
+            s = src.get("source", "")
+            if s == "github_releases":
+                lines.append(
+                    f"[GITHUB RELEASES] {src['repo']}\n"
+                    f"  Latest version : {src.get('latest_version','?')}\n"
+                    f"  Release name   : {src.get('release_name','')}\n"
+                    f"  Published      : {src.get('published_at','')}\n"
+                    f"  Pre-release    : {src.get('prerelease', False)}\n"
+                )
+                if src.get("recent_releases"):
+                    lines.append("  Recent releases:")
+                    for r in src["recent_releases"]:
+                        pre = " [pre]" if r.get("prerelease") else ""
+                        lines.append(f"    • {r['version']}{pre}  ({r['published_at']})")
+                if src.get("release_notes"):
+                    lines.append(f"\n  Release notes:\n{src['release_notes'][:1000]}\n")
+            elif s == "pypi":
+                lines.append(
+                    f"[PYPI] {src['package']}  latest={src.get('latest_version','?')}\n"
+                    f"  {src.get('summary','')}\n"
+                )
+            elif s == "npm":
+                lines.append(
+                    f"[NPM] {src['package']}  latest={src.get('latest_version','?')}\n"
+                    f"  {src.get('description','')}\n"
+                )
+            elif s == "github_tags":
+                lines.append(
+                    f"[GITHUB TAGS] {src['repo']}  latest tag={src.get('latest_tag','?')}\n"
+                )
+
+        # Web results
+        lines.append(f"\nFound {result.get('count',0)} web results:\n")
+        for i, r in enumerate(result.get("results", []), 1):
+            lines.append(f"{i}. [{r.get('source','').upper()}] {r.get('title','')}")
+            lines.append(f"   URL: {r.get('url','')}")
+            if r.get("snippet"):
+                lines.append(f"   Snippet: {r['snippet'][:200]}")
+            if r.get("content"):
+                lines.append(f"   Content: {r['content'][:600]}")
+            lines.append("")
+
+        return "\n".join(lines)
+
+    if name == "calculator":
+        return f"Calculator: {result.get('expression','')} = {result.get('result','')}"
+
+    if name == "read_url":
+        parts = [f"[READ URL] {result.get('url','')}"]
+        if result.get("title"):
+            parts.append(f"Title: {result['title']}")
+        if result.get("truncated"):
+            parts.append(f"(content truncated to {len(result.get('content',''))} chars of {result.get('total_chars',0)} total)")
+        parts.append("")
+        parts.append(result.get("content", ""))
+        return "\n".join(parts)
+
+    if name == "python_exec":
+        parts = ["[PYTHON EXEC]"]
+        if result.get("stdout"):
+            parts.append(f"Output:\n{result['stdout']}")
+        if result.get("stderr"):
+            parts.append(f"Errors:\n{result['stderr']}")
+        if not result.get("stdout") and not result.get("stderr"):
+            parts.append("(no output)")
+        return "\n".join(parts)
+
+    if name == "rag_search":
+        docs = result.get("results", [])
+        if not docs:
+            return "[RAG SEARCH]: No relevant documents found."
+        lines = [f"[RAG SEARCH]: Found {len(docs)} relevant document(s):\n"]
+        for i, d in enumerate(docs, 1):
+            lines.append(f"{i}. {d.get('source','unknown')} (score: {d.get('score',0):.2f})")
+            lines.append(f"   {d.get('text','')[:400]}")
+            lines.append("")
+        return "\n".join(lines)
+
+    # Fallback: clean JSON
+    return json.dumps(result, ensure_ascii=False)
+
+
+async def execute_tool(name: str, args: dict, session_id: str) -> tuple[dict, str]:
+    """Returns (raw_result_dict, formatted_text_for_model)."""
     try:
         if name == "web_search":
             result = await web_search.run(
@@ -189,11 +307,23 @@ async def execute_tool(name: str, args: dict, session_id: str) -> str:
             result = await rag.run_tool(query=args.get("query", ""), session_id=session_id)
         elif name == "calculator":
             result = await calculator.run(expression=args.get("expression", ""))
+        elif name == "read_url":
+            result = await read_url.run(
+                url=args.get("url", ""),
+                max_chars=args.get("max_chars", 5000),
+            )
+        elif name == "python_exec":
+            result = await python_exec.run(
+                code=args.get("code", ""),
+                timeout=args.get("timeout", 10),
+            )
         else:
             result = {"error": f"Unknown tool: {name}"}
-        return json.dumps(result)
+        formatted = _format_tool_result(name, result)
+        return result, formatted
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        err = {"error": str(e)}
+        return err, f"[{name} ERROR]: {e}"
 
 # ── Chat ────────────────────────────────────────────────────────────────────────
 
@@ -214,7 +344,7 @@ async def chat(request: Request):
         "temperature":  body.get("temperature"),
         "top_p":        body.get("top_p"),
         "num_predict":  body.get("max_tokens"),
-        "num_ctx":      body.get("context_length"),
+        "num_ctx":      body.get("context_length") or _default_ctx(model),
     }.items() if v is not None}
 
     # System prompt
@@ -256,7 +386,7 @@ async def chat(request: Request):
     async def stream():
         current_messages  = list(messages)
         tool_iterations   = 0
-        max_tool_iters    = 5
+        max_tool_iters    = 8
 
         while True:
             payload = {
@@ -309,16 +439,17 @@ async def chat(request: Request):
                         "role": "assistant", "content": full_content, "tool_calls": tool_calls,
                     })
                     for tc in tool_calls:
-                        fn   = tc.get("function", {})
-                        name = fn.get("name", "")
+                        fn       = tc.get("function", {})
+                        name     = fn.get("name", "")
                         args_raw = fn.get("arguments", {})
-                        args = args_raw if isinstance(args_raw, dict) else json.loads(args_raw)
+                        args     = args_raw if isinstance(args_raw, dict) else json.loads(args_raw)
 
                         yield f"data: {json.dumps({'tool_call': {'name': name, 'args': args}})}\n\n"
-                        result_str = await execute_tool(name, args, session_id)
-                        yield f"data: {json.dumps({'tool_result': {'name': name, 'result': json.loads(result_str)}})}\n\n"
+                        raw_result, formatted_text = await execute_tool(name, args, session_id)
+                        yield f"data: {json.dumps({'tool_result': {'name': name, 'result': raw_result}})}\n\n"
 
-                        current_messages.append({"role": "tool", "content": result_str})
+                        # Give the model clean formatted text, not raw JSON
+                        current_messages.append({"role": "tool", "content": formatted_text})
                 else:
                     break
 
