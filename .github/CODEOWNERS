@@ -1,0 +1,13 @@
+# Default owner for everything
+* @obnoxiousmods
+
+# Backend
+/tools/ @obnoxiousmods
+/main.py @obnoxiousmods
+/prompts.py @obnoxiousmods
+
+# Frontend
+/index.html @obnoxiousmods
+
+# Infrastructure
+/.github/ @obnoxiousmods

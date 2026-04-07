@@ -1,0 +1,30 @@
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    labels:
+      - "dependencies"
+      - "python"
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      starlette-stack:
+        patterns: ["starlette", "uvicorn", "httpx"]
+      ai-tools:
+        patterns: ["duckduckgo-search", "python-arango"]
+      file-processing:
+        patterns: ["pymupdf*", "python-docx", "python-pptx", "openpyxl", "pillow", "chardet"]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "chore(actions)"

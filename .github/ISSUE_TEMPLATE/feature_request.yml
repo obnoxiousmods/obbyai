@@ -1,0 +1,50 @@
+name: ✨ Feature Request
+description: Suggest a new feature or improvement
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / Motivation
+      description: What problem does this solve? What use case does it enable?
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: What should the feature do? How should it work?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Feature Area
+      options:
+        - New tool / capability
+        - UI / UX improvement
+        - New file type support
+        - Model / inference improvement
+        - RAG / knowledge base
+        - Multi-GPU / server routing
+        - Performance
+        - Security
+        - Developer experience
+        - Other
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Any other approaches you've thought about?
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options:
+        - Nice to have
+        - Would use regularly
+        - Blocking my workflow

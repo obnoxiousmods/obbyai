@@ -1,0 +1,12 @@
+title: "[Discussion] "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: Share your thoughts, questions, or ideas about ObbyAI.
+  - type: textarea
+    id: content
+    attributes:
+      label: What's on your mind?
+    validations:
+      required: true

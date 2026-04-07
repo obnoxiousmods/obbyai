@@ -1,0 +1,47 @@
+# Environment & secrets
+.env
+*.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.venv/
+venv/
+env/
+
+# uv
+.python-version
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/
+
+# Uploads / temp
+uploads/
+tmp/

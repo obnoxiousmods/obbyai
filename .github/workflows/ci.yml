@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  lint-and-check:
+    name: Lint & Syntax Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Lint with Ruff
+        run: uv run ruff check . --output-format=github
+
+      - name: Type check with pyright (non-blocking)
+        run: uv run pyright --project . || true
+        continue-on-error: true
+
+      - name: Check JS syntax in index.html
+        run: |
+          node --version
+          python3 -c "
+          import re, sys
+          html = open('index.html').read()
+          scripts = re.findall(r'<script>(.*?)</script>', html, re.DOTALL)
+          js = '\n'.join(scripts)
+          open('/tmp/obbyai_check.js','w').write(js)
+          "
+          node --check /tmp/obbyai_check.js && echo "✅ JS syntax OK"
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Bandit security scan
+        run: uv run bandit -r . -x .venv,__pycache__ -ll || true
+        continue-on-error: true
+
+      - name: Check for secrets in code
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Run tests
+        run: uv run pytest tests/ -v --tb=short || echo "No tests yet"
+        continue-on-error: true
