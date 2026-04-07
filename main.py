@@ -182,7 +182,7 @@ async def execute_tool(name: str, args: dict, session_id: str) -> str:
         if name == "web_search":
             result = await web_search.run(
                 query=args.get("query", ""),
-                max_results=args.get("max_results", 6),
+                max_results=args.get("max_results", 10),
                 fetch_content=args.get("fetch_content", True),
             )
         elif name == "rag_search":

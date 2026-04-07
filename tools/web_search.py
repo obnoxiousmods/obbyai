@@ -28,11 +28,11 @@ _CACHE_TTL = 300                              # 5 minutes
 
 # ── Config ────────────────────────────────────────────────────────────────────
 BRAVE_API_KEY   = os.getenv("BRAVE_API_KEY", "")
-FETCH_TIMEOUT   = 6          # seconds per page fetch
-FETCH_MAX_CHARS = 2000       # chars to extract from fetched pages
-MAX_FETCH_URLS  = 2          # how many top URLs to fetch content from
-DDG_MAX         = 6
-WIKI_MAX        = 2
+FETCH_TIMEOUT   = 8          # seconds per page fetch
+FETCH_MAX_CHARS = 3000       # chars to extract per page
+MAX_FETCH_URLS  = 30         # fetch content from ALL results
+DDG_MAX         = 20         # DDG results to request
+WIKI_MAX        = 4          # Wikipedia results
 
 HEADERS = {
     "User-Agent": (
@@ -63,8 +63,8 @@ TOOL_SPEC = {
                 },
                 "max_results": {
                     "type": "integer",
-                    "description": "Results to return (1-10, default 6).",
-                    "default": 6,
+                    "description": "Results to return (5-30, default 10).",
+                    "default": 10,
                 },
                 "fetch_content": {
                     "type": "boolean",
@@ -79,8 +79,8 @@ TOOL_SPEC = {
 
 
 # ── Main entry ─────────────────────────────────────────────────────────────────
-async def run(query: str, max_results: int = 6, fetch_content: bool = True) -> dict:
-    max_results = max(1, min(10, max_results))
+async def run(query: str, max_results: int = 10, fetch_content: bool = True) -> dict:
+    max_results = max(5, min(30, max_results))
     cache_key   = hashlib.md5(f"{query}:{max_results}".encode()).hexdigest()
 
     # Cache hit
@@ -91,10 +91,10 @@ async def run(query: str, max_results: int = 6, fetch_content: bool = True) -> d
             return cached
 
     try:
-        # Run DDG + Wikipedia in parallel
-        ddg_task  = asyncio.create_task(_ddg_search(query, DDG_MAX))
-        wiki_task = asyncio.create_task(_wiki_search(query, WIKI_MAX))
-        brave_task = asyncio.create_task(_brave_search(query, 4)) if BRAVE_API_KEY else None
+        # Run DDG + Wikipedia (+ Brave if key set) in parallel
+        ddg_task   = asyncio.create_task(_ddg_search(query, max(max_results, DDG_MAX)))
+        wiki_task  = asyncio.create_task(_wiki_search(query, WIKI_MAX))
+        brave_task = asyncio.create_task(_brave_search(query, 10)) if BRAVE_API_KEY else None
 
         tasks = [t for t in [ddg_task, wiki_task, brave_task] if t]
         results_lists = await asyncio.gather(*tasks, return_exceptions=True)
@@ -116,20 +116,16 @@ async def run(query: str, max_results: int = 6, fetch_content: bool = True) -> d
 
         merged = merged[:max_results]
 
-        # Fetch page content for top URLs
+        # Fetch page content for ALL results in parallel
         if fetch_content:
-            urls_to_fetch = [
-                r["url"] for r in merged[:MAX_FETCH_URLS]
-                if r.get("url") and not r.get("content")
+            fetch_tasks = [
+                _fetch_page_text(r["url"])
+                for r in merged if r.get("url")
             ]
-            if urls_to_fetch:
-                fetched = await asyncio.gather(
-                    *[_fetch_page_text(u) for u in urls_to_fetch],
-                    return_exceptions=True,
-                )
-                for i, text in enumerate(fetched):
-                    if isinstance(text, str) and text:
-                        merged[i]["content"] = text
+            fetched = await asyncio.gather(*fetch_tasks, return_exceptions=True)
+            for i, text in enumerate(fetched):
+                if isinstance(text, str) and text:
+                    merged[i]["content"] = text
 
         result = {
             "query":   query,
