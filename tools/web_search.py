@@ -1,6 +1,6 @@
 """Web search tool using DuckDuckGo (no API key required)."""
 import asyncio
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 
 
 TOOL_SPEC = {

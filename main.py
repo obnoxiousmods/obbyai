@@ -30,7 +30,7 @@ from starlette.routing import Route
 from prompts import get as get_prompt, list_prompts
 from tools import web_search, calculator, datetime_tool
 from tools import rag
-from tools.file_processor import process_file, supported_extensions, ProcessingError
+from tools.file_processor import process_file, supported_extensions, ProcessingError, MODE_AUTO, MODE_TEXT, MODE_VISION, MODE_BOTH
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 
@@ -50,8 +50,8 @@ SERVERS = {
         "default_model": "gemma4:latest",
     },
 }
-DEFAULT_SERVER = "local"
-DEFAULT_MODEL  = "llama3.1:8b"
+DEFAULT_SERVER = "remote"
+DEFAULT_MODEL  = "gemma4:latest"
 
 TOOL_CAPABLE_MODELS = {
     "llama3.1:8b", "llama3.2:1b", "llama3.3:70b",
@@ -115,6 +115,12 @@ async def upload(request: Request):
         form      = await request.form()
         file: UploadFile = form.get("file")
         session_id = str(form.get("session_id", ""))
+        mode       = str(form.get("mode", MODE_AUTO))
+        ingest_rag = str(form.get("ingest", "true")).lower() != "false"
+
+        # Validate mode
+        if mode not in (MODE_AUTO, MODE_TEXT, MODE_VISION, MODE_BOTH):
+            mode = MODE_AUTO
 
         if not file:
             return JSONResponse({"error": "No file provided"}, status_code=400)
@@ -125,24 +131,27 @@ async def upload(request: Request):
         if not data:
             return JSONResponse({"error": "Empty file"}, status_code=400)
 
-        # Process the file
-        result = await process_file(filename, data)
+        # Process the file with the requested mode
+        result = await process_file(filename, data, mode=mode)
 
         text = result.get("text", "").strip()
         rag_result = None
-        if text:
+        if text and ingest_rag:
             rag_result = await rag.ingest_document(text, source=filename, session_id=session_id)
 
         return JSONResponse({
             "filename":           result["filename"],
             "type":               result["type"],
             "ext":                result["ext"],
+            "mode_used":          result.get("mode_used", mode),
             "size_bytes":         result["size_bytes"],
             "pages":              result.get("pages"),
             "truncated":          result.get("truncated", False),
             "text_preview":       text[:500] if text else "",
+            "text_extracted":     result.get("text_extracted"),
             "vision_description": result.get("vision_description"),
             "rag_result":         rag_result,
+            "ingested":           ingest_rag and rag_result is not None,
         })
 
     except ProcessingError as e:

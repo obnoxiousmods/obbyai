@@ -433,6 +433,14 @@ kbd { display: inline-block; padding: 2px 7px; font-size: 11px; font-family: 'Je
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-3); }
+/* ── UPLOAD MODE BUTTONS ── */
+.mode-btn {
+  background: var(--surface2); border: 1px solid var(--border); border-radius: 6px;
+  padding: 3px 9px; color: var(--text-3); cursor: pointer; font-size: 11px;
+  font-weight: 600; transition: all .15s; font-family: inherit; white-space: nowrap;
+}
+.mode-btn:hover { background: var(--surface); color: var(--text); border-color: var(--border2); }
+.mode-btn.active { background: var(--accent-dim); border-color: rgba(124,92,252,.5); color: #a78bfa; }
 @media (max-width: 640px) {
   :root { --sidebar-w: 260px; }
   #sidebar { position: fixed; z-index: 200; height: 100vh; transform: translateX(-100%); }
@@ -507,13 +515,30 @@ kbd { display: inline-block; padding: 2px 7px; font-size: 11px; font-family: 'Je
     <div id="input-area">
       <div id="input-box">
         <div id="file-previews"></div>
+        <!-- Upload mode bar — shown when files are pending -->
+        <div id="upload-mode-bar" style="display:none">
+          <div style="display:flex;align-items:center;gap:6px;padding:6px 12px 2px;flex-wrap:wrap;border-top:1px solid var(--border)">
+            <span style="font-size:11px;color:var(--text-3);font-weight:600;text-transform:uppercase;letter-spacing:.06em">Process:</span>
+            <button class="mode-btn active" id="mode-auto"   onclick="setUploadMode('auto')"   title="Smart: images→vision, docs→text">🤖 Auto</button>
+            <button class="mode-btn"        id="mode-text"   onclick="setUploadMode('text')"   title="Text extraction only, no AI vision">📝 Text</button>
+            <button class="mode-btn"        id="mode-vision" onclick="setUploadMode('vision')" title="Gemma4 vision analysis for all files">👁 Vision</button>
+            <button class="mode-btn"        id="mode-both"   onclick="setUploadMode('both')"   title="Text extraction + vision combined">🔀 Both</button>
+            <div style="flex:1"></div>
+            <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-2);cursor:pointer">
+              <input type="checkbox" id="ingest-toggle" checked
+                style="accent-color:var(--accent);cursor:pointer"
+                onchange="uploadSettings.ingest=this.checked">
+              <span>Add to Knowledge Base</span>
+            </label>
+          </div>
+        </div>
         <div id="input-row">
-          <button id="attach-btn" onclick="triggerFileInput()" title="Attach file">📎</button>
+          <button id="attach-btn" onclick="triggerFileInput()" title="Attach file (📎)">📎</button>
           <textarea id="msg-input" placeholder="Ask anything…" onkeydown="handleKey(event)" oninput="autoResize(this)" rows="1"></textarea>
           <button id="send-btn" onclick="submit()">Send ↑</button>
         </div>
         <input type="file" id="file-input" style="display:none" multiple
-          accept="image/*,.pdf,.txt,.md,.csv,.json,.py,.js,.ts,.html,.css,.xml,.yaml,.yml"
+          accept="image/*,.pdf,.doc,.docx,.pptx,.xlsx,.txt,.md,.csv,.json,.py,.js,.ts,.html,.css,.xml,.yaml,.yml,.sh,.rb,.go,.rs,.java,.kt,.sql"
           onchange="handleFiles(this.files)">
       </div>
       <div id="input-hint">Enter to send · Shift+Enter for newline · / to focus · Ctrl+K new chat</div>
@@ -700,7 +725,7 @@ const STORAGE_KEY = 'obbyai_v1';
 let convs = [];
 let currentId = null;
 let settings = {
-  model: 'llama3.1:8b', server: 'local',
+  model: 'gemma4:latest', server: 'remote',
   temperature: 0.7, topP: 0.9, maxTokens: 2048, contextLength: 4096,
   systemPrompt: '', promptId: null, useTools: true, useRag: true,
 };
@@ -711,6 +736,7 @@ let pendingVisionContext = null;
 let isStreaming = false;
 let abortController = null;
 let sysBarVisible = false;
+let uploadSettings = { mode: 'auto', ingest: true };
 
 // ═══════════════════════════════════════════════
 // UTILS
@@ -756,6 +782,10 @@ function loadData() {
     if (d.settings) {
       settings = Object.assign(settings, d.settings);
       document.getElementById('model-btn').textContent = settings.model + ' \u25be';
+      // Restore server button label immediately from saved state (no async flash)
+      const SERVER_LABELS = {local: '🔵 RX 580', remote: '🟢 RTX 2080 Super'};
+      document.getElementById('server-btn').textContent =
+        (SERVER_LABELS[settings.server] || settings.server) + ' \u25be';
       document.getElementById('sys-input').value = settings.systemPrompt || '';
       const wb = document.getElementById('web-btn');
       wb.className = 'toolbar-btn' + (settings.useTools ? ' active' : '');
@@ -833,6 +863,7 @@ function filterConvs(q) { renderConvList(q); }
 function _clearPending() {
   pendingImages = []; pendingFiles = []; pendingVisionContext = null;
   document.getElementById('file-previews').innerHTML = '';
+  document.getElementById('upload-mode-bar').style.display = 'none';
   document.getElementById('msg-input').value = '';
   autoResize(document.getElementById('msg-input'));
 }
@@ -1168,9 +1199,29 @@ function renderServerList(servers) {
 function selectServer(id) {
   settings.server = id;
   saveData();
-  loadModels();
+  // Update button immediately
+  const SERVER_LABELS = {local: '🔵 RX 580', remote: '🟢 RTX 2080 Super'};
+  document.getElementById('server-btn').textContent =
+    (SERVER_LABELS[id] || id) + ' \u25be';
   closeModal('server-modal');
-  showToast('Server: ' + id, 'success');
+  showToast('Switched to ' + (SERVER_LABELS[id] || id), 'success');
+  // Fetch models for new server → auto-switch to default if current model not available
+  fetch('/models?server=' + encodeURIComponent(id))
+    .then(r => r.json())
+    .then(models => {
+      const names = models.map(m => m.name);
+      if (names.length && !names.includes(settings.model)) {
+        // Pick the server default or first available model
+        const serverDefaults = {local: 'llama3.1:8b', remote: 'gemma4:latest'};
+        const def = serverDefaults[id] || names[0];
+        const pick = names.includes(def) ? def : names[0];
+        settings.model = pick;
+        document.getElementById('model-btn').textContent = pick + ' \u25be';
+        saveData();
+        showToast('Model switched to ' + pick, 'success');
+      }
+    })
+    .catch(() => {});
 }
 
 // ═══════════════════════════════════════════════
@@ -1283,9 +1334,7 @@ function toggleWeb() {
 function toggleRAG() {
   settings.useRag = !settings.useRag;
   const btn = document.getElementById('rag-btn');
-  const badge = document.getElementById('rag-badge');
   btn.className = 'toolbar-btn' + (settings.useRag ? ' active' : '');
-  if (badge) btn.appendChild(badge);
   saveData();
 }
 
@@ -1305,7 +1354,27 @@ function openParamsModal() {
 // ═══════════════════════════════════════════════
 function triggerFileInput() { document.getElementById('file-input').click(); }
 
+function setUploadMode(mode) {
+  uploadSettings.mode = mode;
+  ['auto','text','vision','both'].forEach(m => {
+    const btn = document.getElementById('mode-' + m);
+    if (btn) btn.className = 'mode-btn' + (m === mode ? ' active' : '');
+  });
+}
+
+function showUploadModeBar() {
+  document.getElementById('upload-mode-bar').style.display = 'block';
+}
+
+function hideUploadModeBar() {
+  const prev = document.getElementById('file-previews');
+  if (!prev || prev.children.length === 0) {
+    document.getElementById('upload-mode-bar').style.display = 'none';
+  }
+}
+
 async function handleFiles(files) {
+  if (files.length > 0) showUploadModeBar();
   for (const file of Array.from(files)) {
     if (isImageFile(file)) await handleImageFile(file);
     else await handleDocumentFile(file);
@@ -1344,39 +1413,78 @@ function removePendingImage(idx) {
   pendingImages.splice(idx, 1);
   const el = document.getElementById('thumb-' + idx);
   if (el) el.remove();
+  hideUploadModeBar();
 }
+
+const MODE_LABELS = {
+  auto: '🤖 Auto', text: '📝 Text', vision: '👁 Vision', both: '🔀 Both'
+};
+const FILE_TYPE_ICONS = {
+  image: '🖼', pdf: '📄', word: '📝', pptx: '📊', excel: '📊', text: '📃'
+};
 
 async function handleDocumentFile(file) {
   const conv = getCurrentConv();
   const sessionId = conv ? conv.session_id : uuid();
   const prev = document.getElementById('file-previews');
+  const chipId = 'chip-' + uuid();
   const chip = document.createElement('div');
   chip.className = 'file-chip';
-  chip.innerHTML = '<span class="spinner"></span> ' + esc(file.name);
+  chip.id = chipId;
+  chip.innerHTML = '<span class="spinner"></span> ' + esc(file.name) +
+    ' <span style="color:var(--text-3);font-size:10px">' + esc(MODE_LABELS[uploadSettings.mode] || uploadSettings.mode) + '</span>';
   prev.appendChild(chip);
+
   try {
     const fd = new FormData();
     fd.append('file', file);
     fd.append('session_id', sessionId);
+    fd.append('mode', uploadSettings.mode);
+    fd.append('ingest', uploadSettings.ingest ? 'true' : 'false');
+
     const resp = await fetch('/upload', {method:'POST', body: fd});
-    if (!resp.ok) throw new Error('HTTP ' + resp.status);
-    const result = await resp.json();
-    pendingFiles.push({name: file.name, type: file.type});
-    if (result.vision_description) {
-      pendingVisionContext = result.vision_description;
-      chip.innerHTML = '🖼 ' + esc(file.name) + ' <span style="color:var(--green);font-size:10px">✓ vision</span>';
-    } else {
-      chip.innerHTML = '📄 ' + esc(file.name);
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({error: 'HTTP ' + resp.status}));
+      throw new Error(err.error || 'HTTP ' + resp.status);
     }
-    const chunkInfo = result.rag_result
-      ? (' · ' + (result.rag_result.chunks || result.rag_result.count || '?') + ' chunks')
-      : '';
-    showToast('✓ Ingested' + chunkInfo + ' to knowledge base', 'success');
-    refreshRAGStats();
+    const result = await resp.json();
+    pendingFiles.push({name: file.name, type: file.type, result});
+
+    // Build status chip
+    const typeIcon = FILE_TYPE_ICONS[result.type] || '📎';
+    const modeTag = result.mode_used ? (' <span style="color:var(--accent);font-size:10px">' + esc(MODE_LABELS[result.mode_used] || result.mode_used) + '</span>') : '';
+    const pagesTag = result.pages ? (' <span style="color:var(--text-3);font-size:10px">' + result.pages + (result.type === 'excel' ? ' sheets' : ' pages') + '</span>') : '';
+    const truncTag = result.truncated ? ' <span style="color:var(--yellow);font-size:10px">truncated</span>' : '';
+    const ragTag = result.ingested
+      ? (' <span style="color:var(--green);font-size:10px">✓ RAG</span>' +
+         (result.rag_result ? ' <span style="color:var(--text-3);font-size:10px">(' + (result.rag_result.total_chunks || result.rag_result.inserted || '?') + ' chunks)</span>' : ''))
+      : ' <span style="color:var(--text-3);font-size:10px">not ingested</span>';
+
+    chip.innerHTML = typeIcon + ' ' + esc(file.name) + modeTag + pagesTag + truncTag + ragTag +
+      ' <button onclick="removeChip(\'' + chipId + '\')" style="background:none;border:none;color:var(--text-3);cursor:pointer;padding:0 2px;font-size:11px;margin-left:4px" title="Remove">✕</button>';
+
+    if (result.vision_description) {
+      pendingVisionContext = (pendingVisionContext ? pendingVisionContext + '\n\n' : '') + result.vision_description;
+    }
+
+    if (result.ingested) {
+      const chunks = result.rag_result ? (result.rag_result.total_chunks || result.rag_result.inserted || '?') : '?';
+      showToast('✓ ' + file.name + ' → ' + chunks + ' chunks ingested', 'success');
+      refreshRAGStats();
+    } else {
+      showToast('✓ ' + file.name + ' processed (not added to KB)', 'success');
+    }
   } catch(e) {
-    chip.innerHTML = '❌ ' + esc(file.name) + ' (failed)';
+    chip.innerHTML = '❌ ' + esc(file.name) + ' <span style="color:var(--red);font-size:10px">' + esc(e.message) + '</span>' +
+      ' <button onclick="removeChip(\'' + chipId + '\')" style="background:none;border:none;color:var(--text-3);cursor:pointer;padding:0 2px;font-size:11px;margin-left:4px">✕</button>';
     showToast('Upload failed: ' + e.message, 'error');
   }
+}
+
+function removeChip(id) {
+  const el = document.getElementById(id);
+  if (el) el.remove();
+  hideUploadModeBar();
 }
 
 // ═══════════════════════════════════════════════
