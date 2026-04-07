@@ -696,14 +696,14 @@ const MODEL_TAGS = {
   'mistral-nemo:12b':        {tag:'General',   desc:'Mistral 12B — more capable, uses ~7GB VRAM.'},
   'gemma3:4b':               {tag:'Fast',      desc:'Google Gemma 3 4B. Efficient for its size.'},
   'phi4-mini:3.8b':          {tag:'Fast',      desc:'Microsoft Phi-4 Mini. Punches above its weight.'},
-  'gemma4:latest':           {tag:'Vision',    desc:'Google Gemma 4 multimodal. Handles images.'},
+  'gemma4:e2b':             {tag:'Vision',    desc:'Google Gemma 4 multimodal. Handles images.'},
   'deepseek-v3.1:671b-cloud':{tag:'Cloud',     desc:'DeepSeek V3.1 671B via cloud API.'},
 };
 const TAG_COLORS = {
   General:'#6c8ebf', Coding:'#7fb069', Fast:'#b5a642',
   Reasoning:'#b06090', Thinking:'#c07840', Vision:'#60a5d0', Cloud:'#a0a0a0'
 };
-const VISION_MODELS = ['gemma4:latest'];
+const VISION_MODELS = ['gemma4:e2b', 'gemma4:latest'];
 const SUGGESTIONS = [
   "Explain this like I'm 5: how does HTTPS work?",
   'Write a bash script to find duplicate files by content hash',
@@ -725,7 +725,7 @@ const STORAGE_KEY = 'obbyai_v1';
 let convs = [];
 let currentId = null;
 let settings = {
-  model: 'gemma4:latest', server: 'remote',
+  model: 'gemma4:e2b', server: 'remote',
   temperature: 0.7, topP: 0.9, maxTokens: 2048, contextLength: 4096,
   systemPrompt: '', promptId: null, useTools: true, useRag: true,
 };
@@ -1167,7 +1167,7 @@ async function loadServers() {
   listEl.innerHTML = '<span class="spinner"></span> Loading…';
   const fallback = [
     {id:'local',  name:'Local',  gpu:'RX 580',         default_model:'llama3.1:8b'},
-    {id:'remote', name:'Remote', gpu:'RTX 2080 Super',  default_model:'llama3.1:8b'},
+    {id:'remote', name:'Remote', gpu:'RTX 2080 Super',  default_model:'gemma4:e2b'},
   ];
   try {
     const resp = await fetch('/servers');
@@ -1212,7 +1212,7 @@ function selectServer(id) {
       const names = models.map(m => m.name);
       if (names.length && !names.includes(settings.model)) {
         // Pick the server default or first available model
-        const serverDefaults = {local: 'llama3.1:8b', remote: 'gemma4:latest'};
+        const serverDefaults = {local: 'llama3.1:8b', remote: 'gemma4:e2b'};
         const def = serverDefaults[id] || names[0];
         const pick = names.includes(def) ? def : names[0];
         settings.model = pick;

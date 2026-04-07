@@ -28,7 +28,7 @@ from starlette.responses import HTMLResponse, StreamingResponse, JSONResponse
 from starlette.routing import Route
 
 from prompts import get as get_prompt, list_prompts
-from tools import web_search, calculator, datetime_tool
+from tools import web_search, calculator
 from tools import rag
 from tools.file_processor import process_file, supported_extensions, ProcessingError, MODE_AUTO, MODE_TEXT, MODE_VISION, MODE_BOTH
 
@@ -47,24 +47,26 @@ SERVERS = {
         "url":           os.getenv("OLLAMA_REMOTE_URL", "http://192.168.1.220:11434"),
         "name":          "RTX 2080 Super",
         "gpu":           "NVIDIA RTX 2080 Super 8GB",
-        "default_model": "gemma4:latest",
+        "default_model": "gemma4:e2b",
     },
 }
 DEFAULT_SERVER = "remote"
-DEFAULT_MODEL  = "gemma4:latest"
+DEFAULT_MODEL  = "gemma4:e2b"
 
 TOOL_CAPABLE_MODELS = {
+    "gemma4:latest", "gemma4",
+    "gemma3:4b", "gemma3",
     "llama3.1:8b", "llama3.2:1b", "llama3.3:70b",
     "qwen2.5:7b", "qwen2.5-coder:7b", "qwen3:8b",
     "mistral:7b-instruct", "mistral-nemo:12b",
     "phi4-mini:3.8b",
+    "deepseek-r1:8b",
 }
 
 TOOL_SPECS = [
     web_search.TOOL_SPEC,
     rag.TOOL_SPEC,
     calculator.TOOL_SPEC,
-    datetime_tool.TOOL_SPEC,
 ]
 
 # ── Basic routes ───────────────────────────────────────────────────────────────
@@ -180,14 +182,13 @@ async def execute_tool(name: str, args: dict, session_id: str) -> str:
         if name == "web_search":
             result = await web_search.run(
                 query=args.get("query", ""),
-                max_results=args.get("max_results", 5),
+                max_results=args.get("max_results", 6),
+                fetch_content=args.get("fetch_content", True),
             )
         elif name == "rag_search":
             result = await rag.run_tool(query=args.get("query", ""), session_id=session_id)
         elif name == "calculator":
             result = await calculator.run(expression=args.get("expression", ""))
-        elif name == "get_datetime":
-            result = await datetime_tool.run(timezone_name=args.get("timezone", "local"))
         else:
             result = {"error": f"Unknown tool: {name}"}
         return json.dumps(result)
