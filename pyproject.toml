@@ -33,7 +33,7 @@ ignore = ["E501"]
 dev = [
     "ruff>=0.15.10",
     "pytest>=8.0",
-    "bandit>=1.8",
+    "bandit>=1.9.4",
     "pyright>=1.1.408",
     "pytest-asyncio>=1.3.0",
 ]
