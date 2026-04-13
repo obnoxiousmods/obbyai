@@ -31,7 +31,7 @@ ignore = ["E501"]
 
 [dependency-groups]
 dev = [
-    "ruff>=0.9",
+    "ruff>=0.15.10",
     "pytest>=8.0",
     "bandit>=1.8",
     "pyright>=1.1",
